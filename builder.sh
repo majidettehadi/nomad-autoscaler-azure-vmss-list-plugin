@@ -2,4 +2,4 @@
 
 CGO_ENABLED=0
 
-go build -o azure-vmss-list .
+go build -tags netgo -o azure-vmss-list .
