@@ -12,7 +12,6 @@ const (
 	configKeyTenantID       = "tenant_id"
 	configKeyClientID       = "client_id"
 	configKeySecretKey      = "secret_access_key"
-	configKeyVMSSCount      = "vmss_count"
 
 	configKeyResourceGroupList = "resource_group_list"
 	configKeyVMSSList          = "vm_scale_set_list"

@@ -20,28 +20,15 @@ import (
 )
 
 type TargetPlugin struct {
-	logger           hclog.Logger
-	AzureControllers []*AzureController
-	clusterUtils     *scaleutils.ClusterScaleUtils
+	logger          hclog.Logger
+	AzureController *AzureController
+	clusterUtils    *scaleutils.ClusterScaleUtils
 }
 
 func (t *TargetPlugin) SetConfig(config map[string]string) error {
-	vmssCountStr, ok := config[configKeyVMSSCount]
-	if !ok {
-		return fmt.Errorf("required config param %s not found", configKeyVMSSCount)
-	}
-	vmssCount, err := strconv.Atoi(vmssCountStr)
-	if err != nil {
-		return fmt.Errorf("required config param %s is not a number, %s", configKeyVMSSCount, vmssCountStr)
-	}
-
-	for i := 0; i < vmssCount; i++ {
-		azureController := &AzureController{}
-		if err := azureController.init(config); err != nil {
-			return fmt.Errorf("cannot set config for %d, %s", i, err.Error())
-		}
-
-		t.AzureControllers = append(t.AzureControllers, azureController)
+	t.AzureController = &AzureController{}
+	if err := t.AzureController.init(config); err != nil {
+		return fmt.Errorf("cannot set config, %s", err.Error())
 	}
 
 	clusterUtils, err := scaleutils.NewClusterScaleUtils(nomad.ConfigFromNamespacedMap(config), t.logger)
@@ -49,11 +36,10 @@ func (t *TargetPlugin) SetConfig(config map[string]string) error {
 		return err
 	}
 
-	// Store and set the remote ID callback function.
 	t.clusterUtils = clusterUtils
 	t.clusterUtils.ClusterNodeIDLookupFunc = azureNodeIDMap
 
-	t.logger.Info("config is set", "vmss_count", vmssCountStr)
+	t.logger.Debug("config is set")
 	return nil
 }
 
@@ -85,7 +71,7 @@ func (t *TargetPlugin) Scale(action sdk.ScalingAction, config map[string]string)
 	var totalVMSSCapacity int64
 	for idx, vmScaleSet := range vmScaleSetList {
 		ctx := context.Background()
-		currVMSS, err := t.AzureControllers[idx].vmss.Get(ctx, resourceGroupList[idx], vmScaleSet)
+		currVMSS, err := t.AzureController.vmss.Get(ctx, resourceGroupList[idx], vmScaleSet)
 		if err != nil {
 			return fmt.Errorf("failed to get Azure vmss: %v", err)
 		}
@@ -111,7 +97,7 @@ func (t *TargetPlugin) Scale(action sdk.ScalingAction, config map[string]string)
 			if count > 0 {
 				log.Info("creating Azure ScaleSet instances", "vmss_name", vmScaleSet, "desired_count", count)
 				ctx := context.Background()
-				go t.AzureControllers[idx].scaleOut(ctx, resourceGroupList[idx], vmScaleSet, count, &wg, log)
+				go t.AzureController.scaleOut(ctx, resourceGroupList[idx], vmScaleSet, count, &wg, log)
 			} else {
 				wg.Done()
 				log.Debug("no new Azure ScaleSet instance needed", "vmss_name", vmScaleSet, "desired_count", count)
@@ -127,7 +113,7 @@ func (t *TargetPlugin) Scale(action sdk.ScalingAction, config map[string]string)
 		for idx, vmScaleSet := range vmScaleSetList {
 			log.Debug("collection Azure ScaleSet instances IDs", "resource_group", resourceGroupList[idx], "vmss_name", vmScaleSet)
 			ctx := context.Background()
-			remoteIDs, err = t.AzureControllers[idx].getRemoteIds(ctx, resourceGroupList[idx], vmScaleSet, remoteIDs)
+			remoteIDs, err = t.AzureController.getRemoteIds(ctx, resourceGroupList[idx], vmScaleSet, remoteIDs)
 			if err != nil {
 				return fmt.Errorf("failed to egt remote ids in tasks: %v", err)
 			}
@@ -156,7 +142,7 @@ func (t *TargetPlugin) Scale(action sdk.ScalingAction, config map[string]string)
 			ctx := context.Background()
 			if len(instanceIDs[vmScaleSet]) > 0 {
 				log.Debug("deleting Azure ScaleSet instances", "instances", instanceIDs[vmScaleSet], "vmss_name", vmScaleSet)
-				go t.AzureControllers[idx].scaleIn(ctx, resourceGroupList[idx], vmScaleSet, instanceIDs[vmScaleSet], &wg, log)
+				go t.AzureController.scaleIn(ctx, resourceGroupList[idx], vmScaleSet, instanceIDs[vmScaleSet], &wg, log)
 			} else {
 				wg.Done()
 				log.Debug("no deletion Azure ScaleSet instance needed", "vmss_name", vmScaleSet)
@@ -203,12 +189,12 @@ func (t *TargetPlugin) Status(config map[string]string) (*sdk.TargetStatus, erro
 	latestTime := int64(math.MinInt64)
 	for idx, vmScaleSet := range vmScaleSetList {
 		ctx := context.Background()
-		vmss, err := t.AzureControllers[idx].vmss.Get(ctx, resourceGroupList[idx], vmScaleSet)
+		vmss, err := t.AzureController.vmss.Get(ctx, resourceGroupList[idx], vmScaleSet)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get Azure ScaleSet: %v", err)
 		}
 
-		instanceView, err := t.AzureControllers[idx].vmss.GetInstanceView(ctx, resourceGroupList[idx], vmScaleSet)
+		instanceView, err := t.AzureController.vmss.GetInstanceView(ctx, resourceGroupList[idx], vmScaleSet)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get Azure ScaleSet Instance View: %v", err)
 		}
